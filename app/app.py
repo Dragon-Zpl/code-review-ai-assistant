@@ -167,7 +167,8 @@ class App:
         self.tree.tag_configure('urgent', background='#ffeeee', foreground='red')  # 浅红背景 + 红色文字
         self.tree.tag_configure('new', background="#ecec34")  # 浅黄背景
         self.tree.tag_configure('completed', background="#14e914")  # 浅绿背景
-            
+        
+
         # 添加滚动条
         scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -288,8 +289,26 @@ class App:
                     content = self.file_analysis[file_path]["content"]
                     
                     # 调用FastGTP分析内容（带中断检查）
-                    question = """请帮我review这段代码, 找出潜在的安全问题，并以下面的格式回答我：
-                    代码中存在X个潜在的安全问题:
+                    question = """
+                    请帮我review这段代码, 找出的明显代码缺陷(不用跨文件分析,只对当前代码进行分析)
+                    重点:
+                        1. 功能性缺陷（逻辑错误、边界条件未处理、计算错误）  
+                        2. 可靠性缺陷（未处理异常、资源泄露、竞态条件）  
+                        3. 安全性缺陷 (SQL 注入、命令注入、硬编码密钥等）  
+                        4. 可维护性缺陷（拼写错误、魔法数字、重复代码）  
+                        5. 性能缺陷（不必要的循环、未优化的数据结构）
+                    要求:
+                        - 仅分析当前代码，不考虑调用外部函数会产生的问题  
+                        - 只针对真实且有显著影响的问题 
+                        - 允许回答“没有明显问题”
+                        - 不要编造或过度推测潜在风险
+                        - 不要对函数的参数过渡判断, 尤其是项目内部的函数的出入参
+                        - 不要对函数的返参(除err以外)未处理参数为nil的情况进行判断
+                        - 不要考虑数字类型溢出的问题
+                        - 代码内常量的使用如在文件内没提供可能是在同目录下的其他文件内，不要过渡推测
+
+                    并严格按照下面的格式回答我：
+                    代码中存在X个明显的安全问题:
                     然后按照顺序列出每个问题描述以及优化方案, 使用markdown格式。
                     代码如下:
                     ```
@@ -311,7 +330,7 @@ class App:
                         # 解析答案中的问题数量
                         if "代码中存在" in answer:
                             try:
-                                problem_count = int(answer.split("代码中存在")[1].split("个潜在的安全问题")[0].strip())
+                                problem_count = int(answer.split("代码中存在")[1].split("个明显的")[0].strip())
                             except ValueError:
                                 pass
                     # 更新UI状态
@@ -467,13 +486,13 @@ class App:
                 
                 if status == "新变更":
                     display_text = "● 新变更"
-                    tags = ('urgent',)  # 红色感叹号 + 红色背景
+                    tags = ('new',)  # 红色感叹号 + 红色背景
                 elif status == "等待分析":
                     display_text = "等待中...❗"  # 添加红色感叹号
-                    tags = ('urgent',)
+                    tags = ('new',)
                 elif status == "分析中":
                     display_text = "分析中...❗"  # 添加红色感叹号
-                    tags = ('urgent',)
+                    tags = ('new',)
                 elif status == "分析完成":
                     if problem_count > 0:
                         display_text = f"分析完成, 发现{problem_count}个潜在安全问题❗"
@@ -544,6 +563,18 @@ class App:
         # 左侧代码文本区域
         left_frame = ttk.Frame(paned)
         paned.add(left_frame, weight=1)
+
+        # 添加查找功能框架
+        search_frame = ttk.Frame(left_frame)
+        search_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(search_frame, text="查找:").pack(side=tk.LEFT)
+        search_entry = ttk.Entry(search_frame)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        search_entry.bind("<Return>", lambda e: self.find_in_text(text_source, search_entry.get()))
+        
+        ttk.Button(search_frame, text="查找", 
+                command=lambda: self.find_in_text(text_source, search_entry.get())).pack(side=tk.LEFT)
         
         ttk.Label(left_frame, text="代码").pack(pady=5)
         text_source = scrolledtext.ScrolledText(left_frame, wrap=tk.WORD)
@@ -551,6 +582,8 @@ class App:
         text_source.insert(tk.END, file_content)
         text_source.config(state=tk.DISABLED)
         
+        text_source.bind("<Control-f>", lambda e: search_entry.focus())
+
         # 右侧Markdown预览区域
         right_frame = ttk.Frame(paned)
         paned.add(right_frame, weight=1)
@@ -581,7 +614,36 @@ class App:
                 # 移除红色感叹号
                 self.tree.item(item, values=(file_path, "已查看"), tags=('completed',))
                 break
-    
+
+    def find_in_text(self, text_widget, search_str):
+        """在文本组件中查找字符串"""
+        if not search_str:
+            return
+        
+        # 取消之前的高亮
+        text_widget.tag_remove("found", "1.0", tk.END)
+        
+        # 如果为空字符串，直接返回
+        if not search_str.strip():
+            return
+        
+        # 从当前光标位置开始搜索
+        start_pos = text_widget.index(tk.INSERT)
+        idx = text_widget.search(search_str, start_pos, stopindex=tk.END)
+        
+        # 如果没找到，从头开始搜索
+        if not idx:
+            idx = text_widget.search(search_str, "1.0", stopindex=tk.END)
+        
+        # 如果找到，高亮显示并滚动到该位置
+        if idx:
+            end_pos = f"{idx}+{len(search_str)}c"
+            text_widget.tag_add("found", idx, end_pos)
+            text_widget.tag_config("found", background="yellow")
+            text_widget.see(idx)
+            text_widget.mark_set(tk.INSERT, end_pos)
+            text_widget.focus()
+        
     def apply_markdown_styles(self, text_widget, content):
         """应用Markdown样式到文本组件"""
         text_widget.config(state=tk.NORMAL)

@@ -3,6 +3,8 @@ import os
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import logging
+import subprocess
+import threading
 
 class DirectoryWatcher:
     def __init__(self, path, callback, recursive=True, file_types=None):
@@ -17,12 +19,19 @@ class DirectoryWatcher:
         self.file_types = file_types
         self.observer = Observer()
         self.callback = callback  # 新增回调函数
+        self.git_lock = threading.Lock()
         logging.info(f"初始化监控器: 路径={path}, 递归={recursive}, 文件类型={file_types}")  # 调试信息
 
     class _Handler(FileSystemEventHandler):
-        def __init__(self, file_types, callback):
+        def __init__(self, path, file_types, callback, git_lock: threading.Lock = None):
             self.file_types = file_types
             self.callback = callback
+            self.path = path
+            self.git_changes = []  # 用于存储 git 变更文件列表
+            self.last_get_git_changes_time = 0  # 上次获取 git 变更的时间戳
+            self.get_git_changes_interval = 2  # 获取 git 变更的时间间隔（秒）
+            self.is_git_repo = True  # 是否是 git 仓库
+            self.git_lock = git_lock # 用于保护 git 状态的锁
 
         def _match_type(self, file_path):
             if not self.file_types:
@@ -31,7 +40,11 @@ class DirectoryWatcher:
 
         def on_modified(self, event):
             if not event.is_directory and self._match_type(event.src_path):
-                logging.info(f"文件被修改: {event.src_path}")
+                git_changes, is_git = self._get_git_changes()
+                file_name = os.path.basename(event.src_path)
+                # 如果是 git 仓库且文件不在变更列表中，则忽略
+                if is_git and file_name not in git_changes:
+                    return
                 try:
                     with open(event.src_path, "r", encoding="utf-8") as f:
                         content = f.read()
@@ -41,8 +54,72 @@ class DirectoryWatcher:
                 except Exception as e:
                     logging.info(f"读取文件失败: {e}")
 
+        # 返还变更文件,以及是否是git目录            
+        def _get_git_changes(self):
+            """
+            获取当前 git 变更的文件列表
+            :return: (changes, is_git_repo)
+                    changes: list[str] 变更文件路径列表
+                    is_git_repo: bool 是否是 git 仓库
+            """
+            # 先检查是否在时间间隔内，避免不必要的锁竞争
+            current_time = time.time()
+            if (self.is_git_repo and 
+                current_time - self.last_get_git_changes_time < self.get_git_changes_interval):
+                return self.git_changes, True
+            
+            # 获取锁
+            with self.git_lock:
+                # 再次检查，因为可能在等待锁的时候已经有其他线程更新了
+                current_time = time.time()
+                if (self.is_git_repo and 
+                    current_time - self.last_get_git_changes_time < self.get_git_changes_interval):
+                    return self.git_changes, True
+                    
+                if not self.is_git_repo:
+                    return [], False
+                
+                try:
+                    # 检查是否是 git 仓库
+                    result = subprocess.run(
+                        ["git", "rev-parse", "--is-inside-work-tree"],
+                        cwd=self.path,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode != 0 or result.stdout.strip() != "true":
+                        self.is_git_repo = False
+                        return [], False  # 不是 git 仓库
+                        
+                    # 获取变更文件
+                    status_result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=self.path,
+                        capture_output=True,
+                        text=True
+                    )
+                    output = status_result.stdout.strip()
+                    if not output:
+                        self.git_changes = []
+                        self.last_get_git_changes_time = current_time
+                        return [], True  # 是 git 仓库，但没有变更
+                        
+                    ll = output.split("\n")
+                    changes = []
+                    for line in ll:
+                        change_path = line.strip()[2:]
+                        if change_path:
+                            # 解析到文件名
+                            changes.append(os.path.basename(change_path))
+                    self.git_changes = changes
+                    self.last_get_git_changes_time = current_time
+                    return changes, True
+                except Exception as e:
+                    logging.error(f"获取 Git 状态失败: {e}")
+                    return [], False
+
     def start(self):
-        handler = self._Handler(self.file_types, self.callback)
+        handler = self._Handler(self.path, self.file_types, self.callback, self.git_lock)
         self.observer.schedule(handler, self.path, recursive=self.recursive)
         self.observer.start()
         logging.info(f"开始监听目录: {self.path}（递归: {self.recursive}）")
