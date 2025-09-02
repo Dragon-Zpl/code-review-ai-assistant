@@ -44,7 +44,7 @@ class FastGTP(Kernel):
             if response.status_code != 200:
                 if retry_count < 3:
                     return self.answer(question, retry_count+1)
-                return "当前网络拥挤，请稍后再试。"
+                return "当前网络拥挤，请稍后再试: {}".format(response.text)
             else:
                 return response.json()["choices"][0]["message"]["content"]
         except Exception as e:

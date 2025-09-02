@@ -4,7 +4,8 @@ import logging
 from config.config import Config
 from app.app import App
 import tkinter as tk
-
+sys.stdout = open(os.devnull, 'w')
+sys.stderr = open(os.devnull, 'w')
 def setup_logging(log_level):
     """设置日志记录"""
     valid_levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
@@ -19,6 +20,23 @@ def setup_logging(log_level):
         ]
     )
     logging.info("日志系统已初始化，日志级别: %s", logging.getLevelName(log_level))
+
+def setup_logging_not_log(log_level):
+    """最彻底的日志禁用方法"""
+    # 禁用整个日志模块
+    def do_nothing(*args, **kwargs):
+        pass
+    
+    # 替换所有日志方法为空函数
+    logging.debug = do_nothing
+    logging.info = do_nothing
+    logging.warning = do_nothing
+    logging.error = do_nothing
+    logging.critical = do_nothing
+    logging.log = do_nothing
+    
+    # 禁用根记录器
+    logging.getLogger().disabled = True
 
 def main():
     try:
@@ -38,6 +56,6 @@ def main():
         if 'root' in locals():  # 仅检查变量是否存在，不检查对象状态
             logging.info("应用已关闭")
     
-# pyinstaller -w -F -n "Code Review AI Assistant" -i icon.ico --collect-data=ntwork main.py
+# pyinstaller -w -F -n "Code Review AI Assistant" -i icon.ico main.py
 if __name__ == "__main__":
-    main()
+    main()  

@@ -8,7 +8,7 @@ from monitor.file import DirectoryWatcher
 import queue
 import time
 import logging
-
+import requests
 class App:
     def __init__(self, root:tk.Tk):
         self.root = root
@@ -19,6 +19,7 @@ class App:
         # 加载配置
         self.config = Config()
         self.config.load_from_yaml()
+        
         
         # 创建FastGTP实例
         self.fast_gtp = FastGTP(self.config.fast_gtp_config)
@@ -136,6 +137,16 @@ class App:
         ttk.Spinbox(parent, from_=1, to=10, textvariable=self.max_concurrent).grid(row=row, column=1, padx=5, pady=5, sticky=tk.W)
         row += 1
         
+        # 新增：不分析.gitignore文件或目录的配置
+        self.ignore_gitignore = tk.BooleanVar(value=self.config.ignore_gitignore)
+        ignore_check = ttk.Checkbutton(
+            parent, 
+            text="不分析.gitignore的文件或目录",
+            variable=self.ignore_gitignore
+        )
+        ignore_check.grid(row=row, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        row += 1
+
         # 按钮区域
         button_frame = ttk.Frame(parent)
         button_frame.grid(row=row, column=0, columnspan=2, pady=10)
@@ -209,6 +220,7 @@ class App:
         self.config.fast_gtp_config.gtp_model = self.gpt_model.get()
         self.config.monitor_project_path = self.monitor_path.get()
         self.config.max_concurrent_analysis = self.max_concurrent.get()  # 保存并发数配置
+        self.config.ignore_gitignore = self.ignore_gitignore.get()  # 保存.gitignore配置
         
         # 处理文件类型配置
         file_types_str = self.file_types_var.get()
@@ -331,6 +343,8 @@ class App:
                         if "代码中存在" in answer:
                             try:
                                 problem_count = int(answer.split("代码中存在")[1].split("个明显的")[0].strip())
+                                if problem_count > 0:
+                                    send_report(self.config.name, file_path, problem_count)
                             except ValueError:
                                 pass
                     # 更新UI状态
@@ -403,6 +417,7 @@ class App:
     
     def run_monitor(self, path, file_types):
         self.watcher = DirectoryWatcher(
+            config=self.config,
             path=path,
             callback=self.file_modified_callback,
             recursive=True,
@@ -843,6 +858,41 @@ class App:
             self.watcher.stop()
         
         self.root.destroy()
+
+def send_report(name, file_name, question_count, base_url="http://172.18.154.66:5000"):
+    """
+    发送报告到Flask接口
+    
+    Args:
+        name (str): 报告名称，将作为文件名
+        file_name (str): 文件名称
+        question_count (int): 问题数量
+        base_url (str): Flask应用的基础URL，默认为http://172.18.154.66:5000
+    
+    Returns:
+        dict: 接口响应结果
+    """
+    url = "{}/report".format(base_url)
+    
+    # 准备请求数据
+    data = {
+        "name": name,
+        "file_name": file_name,
+        "question_count": question_count
+    }
+    
+    try:
+        # 发送POST请求
+        response = requests.post(url, data=data, timeout=5)
+        
+        # 返回JSON响应
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        return {
+            "code": 500,
+            "message": f"请求失败: {str(e)}"
+        }
+
 
 if __name__ == "__main__":
     root = tk.Tk()
