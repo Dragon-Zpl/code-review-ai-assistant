@@ -1,12 +1,1 @@
-fast_gtp_config:
-  gtp_model: GLM-4.5
-  secret_key: sk-PtxBvgDpcroxxDkmA66eBa18A99f45A0Ac8fB930B5D934F7
-  url: https://api.edgefn.net/v1/chat/completions
-file_types:
-- .py
-- .go
-ignore_gitignore: true
-log_level: INFO
-max_concurrent_analysis: 3
-monitor_project_path: D:/go/src/pr2/security_portal
-name: d9d1ff92
+
