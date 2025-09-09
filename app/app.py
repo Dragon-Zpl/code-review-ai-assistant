@@ -9,6 +9,15 @@ import queue
 import time
 import logging
 import requests
+
+check_options_map = {
+    1: "功能性缺陷（逻辑错误、边界条件未处理、计算错误）",
+    2: "可靠性缺陷（未处理异常、资源泄露、竞态条件）",
+    3: "安全性缺陷 (SQL 注入、命令注入、硬编码密钥等）",
+    4: "可维护性缺陷（拼写错误、魔法数字、重复代码）",
+    5: "性能缺陷（不必要的循环、未优化的数据结构）"
+}
+
 class App:
     def __init__(self, root:tk.Tk):
         self.root = root
@@ -137,6 +146,26 @@ class App:
         ttk.Spinbox(parent, from_=1, to=10, textvariable=self.max_concurrent).grid(row=row, column=1, padx=5, pady=5, sticky=tk.W)
         row += 1
         
+        # 新增：检查类型多选框
+        ttk.Label(parent, text="检查类型:").grid(row=row, column=0, padx=5, pady=5, sticky=tk.NW)
+        check_frame = ttk.Frame(parent)
+        check_frame.grid(row=row, column=1, padx=5, pady=5, sticky=tk.W)
+        row += 1
+        
+        # 检查类型选项
+        check_options = [
+        ]
+        for key, desc in check_options_map.items():
+            check_options.append((desc, key))
+        
+        # 初始化检查类型变量
+        self.check_vars = {}
+        for i, (text, value) in enumerate(check_options):
+            var = tk.BooleanVar(value=value in self.config.check_type_list)
+            self.check_vars[value] = var
+            cb = ttk.Checkbutton(check_frame, text=text, variable=var)
+            cb.grid(row=i, column=0, sticky=tk.W)
+
         # 新增：不分析.gitignore文件或目录的配置
         self.ignore_gitignore = tk.BooleanVar(value=self.config.ignore_gitignore)
         ignore_check = ttk.Checkbutton(
@@ -222,6 +251,10 @@ class App:
         self.config.max_concurrent_analysis = self.max_concurrent.get()  # 保存并发数配置
         self.config.ignore_gitignore = self.ignore_gitignore.get()  # 保存.gitignore配置
         
+        # 处理检查类型配置
+        self.config.check_type_list = [value for value, var in self.check_vars.items() if var.get()]
+        
+
         # 处理文件类型配置
         file_types_str = self.file_types_var.get()
         self.config.file_types = [ext.strip() for ext in file_types_str.split(",") if ext.strip()]
@@ -300,15 +333,31 @@ class App:
                     # 获取文件内容
                     content = self.file_analysis[file_path]["content"]
                     
-                    # 调用FastGTP分析内容（带中断检查）
-                    question = """
-                    请帮我review这段代码, 找出的明显代码缺陷(不用跨文件分析,只对当前代码进行分析)
-                    重点:
+                    focus = ""
+                    if self.config.check_type_list:
+                        num = 1
+                        for ct in self.config.check_type_list:
+                            if ct in check_options_map:
+                                focus += "{}. {}\n".format(num, check_options_map[ct])
+                                num += 1
+                    else:
+                        num = 1
+                        for ct in check_options_map:
+                            focus += "{}. {}\n".format(num, check_options_map[ct])
+                            num += 1
+
+                    """
                         1. 功能性缺陷（逻辑错误、边界条件未处理、计算错误）  
                         2. 可靠性缺陷（未处理异常、资源泄露、竞态条件）  
                         3. 安全性缺陷 (SQL 注入、命令注入、硬编码密钥等）  
                         4. 可维护性缺陷（拼写错误、魔法数字、重复代码）  
                         5. 性能缺陷（不必要的循环、未优化的数据结构）
+                    """
+                    # 调用FastGTP分析内容（带中断检查）
+                    question = """
+                    请帮我review这段代码, 找出的明显代码缺陷(不用跨文件分析,只对当前代码进行分析)
+                    重点:
+                        {}
                     要求:
                         - 仅分析当前代码，不考虑调用外部函数会产生的问题  
                         - 只针对真实且有显著影响的问题 
@@ -326,7 +375,7 @@ class App:
                     ```
                     {}
                     ```
-                    """.format(content)          
+                    """.format(focus,content)          
                     # 使用带中断检查的分析方法
                     answer = self.safe_analyze_content(question, stop_event)
                     

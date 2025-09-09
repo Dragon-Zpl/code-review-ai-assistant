@@ -11,6 +11,7 @@ class Config:
         self.max_concurrent_analysis = 3  # 最大并发分析任务数
         self.name = "" # 用户名
         self.ignore_gitignore = False  # 新增：保存.gitignore配置
+        self.check_type_list = [] # 检查类型列表
 
     def load_from_yaml(self):
         if os.path.exists('config.yaml'):
@@ -25,6 +26,7 @@ class Config:
                     self.file_types = config_data.get('file_types', ['.py', '.go'])
                     self.max_concurrent_analysis = config_data.get('max_concurrent_analysis', 3)  # 加载并发数配置
                     self.ignore_gitignore = config_data.get('ignore_gitignore', False)  # 加载.gitignore配置
+                    self.check_type_list = config_data.get('check_type_list', [])
                     # 先从配置中加载用户名,  不存在的话或为空的话则生成一个随机的
                     self.name = config_data.get('name', "")
                     if not self.name:
@@ -51,7 +53,8 @@ class Config:
             'file_types': self.file_types,
             'max_concurrent_analysis': self.max_concurrent_analysis,  # 保存并发数配置
             'name': self.name,
-            'ignore_gitignore': self.ignore_gitignore  # 保存.gitignore配置
+            'ignore_gitignore': self.ignore_gitignore,  # 保存.gitignore配置
+            'check_type_list': self.check_type_list
         }
         logging.info("正在保存配置到 YAML 文件...")
         with open('config.yaml', 'w', encoding='utf-8') as file:
